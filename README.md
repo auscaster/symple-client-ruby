@@ -2,6 +2,11 @@
 
 Emit realtime messages and manage sessions from Ruby/Rails to the [Symple](https://github.com/sourcey/symple-server) messaging server via Redis.
 
+Part of the Symple ecosystem:
+
+- **[symple-server](https://github.com/sourcey/symple-server)** — Node.js messaging server
+- **[symple-client](https://github.com/sourcey/symple-client)** — JavaScript client (browser & Node.js)
+
 ## How It Works
 
 The Symple server uses the `@socket.io/redis-adapter` for horizontal scaling. This client speaks the same Redis pub/sub protocol, allowing your Ruby app to push messages directly to connected Socket.IO clients without HTTP requests to the Symple server.
