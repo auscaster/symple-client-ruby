@@ -1,46 +1,142 @@
-# Symple Ruby Client
+# Symple Client for Ruby
 
-The Symple client module for Ruby which enables one to send Symple messages from a Ruby app to the server using the intermediary redis instance. 
+Emit realtime messages and manage sessions from Ruby/Rails to the [Symple](https://github.com/sourcey/symple-server) messaging server via Redis.
 
-## What is Symple?
+## How It Works
 
-Symple is a presence and messaging protocol which is semantically similar to XMPP, except that it is unrestrictive and vastly simplified, and it uses JSON instead of XML for encoding messages. Symple also has a C++ client which makes it ideas for messaging and remoting between desktop, mobile and browser clients.
+The Symple server uses the `@socket.io/redis-adapter` for horizontal scaling. This client speaks the same Redis pub/sub protocol, allowing your Ruby app to push messages directly to connected Socket.IO clients without HTTP requests to the Symple server.
 
-## How to use it
+```
+Ruby/Rails  -->  Redis pub/sub  -->  Symple Server  -->  Socket.IO Clients
+```
 
-1. Clone the `symple-ruby-client`
-2. Simply `require` the `symple.rb` file in your Ruby app
-3. Call `broadcast`, `broadcast_user` or `broadcast_group` to send a JSON serialized object to peers.
+## Install
 
-## Examples
-
-Here is an example of using Symple in a Rails app. Lets say we have an Event model, and we want to broadcast the object to all connected peers in the group when a new Event is created:
+Add to your Gemfile:
 
 ```ruby
-class Event < ActiveRecord::Base
-  belongs_to :user      
-  after_create :symple_broadcast
-  
-  def symple_broadcast
-    Symple.broadcast_group(self.user.group_id, {
-        name: self.name,                                     # name of the event
-        type: self.class.name,                               # the name of the object being serialized
-        from: "#{self.user.username}@#{self.user.group_id}", # sender symple address
-        data: self                                           # pass the instance to be serialized using to_json
-      })
+gem 'symple-client-ruby', git: 'https://github.com/sourcey/symple-client-ruby'
+```
+
+Then `bundle install`.
+
+## Configuration
+
+Set a global Redis connection:
+
+```ruby
+# config/initializers/symple.rb
+Symple.redis = Redis.new(url: ENV['REDIS_URL'])
+
+# Or if you already have a global $redis:
+# Symple.redis = $redis
+```
+
+## Emitting Messages
+
+Send messages to specific users (by their Symple user ID / room):
+
+```ruby
+emitter = Symple::Emitter.new(
+  from: current_user.id.to_s,
+  rooms: recipient_ids.map(&:to_s)
+)
+
+# Chat message
+emitter.emit(
+  type: 'message',
+  data: 'Hello!',
+  chat_id: chat.id,
+  sender_id: current_user.id
+)
+
+# Event
+emitter.emit(
+  type: 'event',
+  name: 'chat.typing',
+  data: { user_id: current_user.id, typing: true }
+)
+```
+
+### Chaining API
+
+```ruby
+Symple::Emitter.new
+  .from(user.id.to_s)
+  .to(recipient.id.to_s)
+  .emit(type: 'message', data: 'Hi!')
+```
+
+### Convenience method
+
+```ruby
+Symple.emitter(from: user.id.to_s, rooms: ['42', '99'])
+  .emit(type: 'event', name: 'refresh', data: { scope: 'contacts' })
+```
+
+## Session Management
+
+The Symple server authenticates clients by looking up sessions in Redis at `symple:session:<token>`. Use `Symple::Session` to manage these from Ruby:
+
+```ruby
+session = Symple::Session.new
+# or: session = Symple.session
+
+# Create a session (e.g. after user login)
+session.set(api_token.token, {
+  user_id: user.id,
+  first_name: user.first_name,
+  last_name: user.last_name
+}, ttl: 1.week.to_i)
+
+# Read
+data = session.get(api_token.token)
+
+# Extend TTL
+session.touch(api_token.token, ttl: 1.week.to_i)
+
+# Delete on logout
+session.delete(api_token.token)
+```
+
+### ActiveRecord Integration
+
+```ruby
+class ApiToken < ApplicationRecord
+  after_save :update_symple_session
+  after_destroy :remove_symple_session
+
+  private
+
+  def update_symple_session
+    Symple.session.set(token, {
+      user_id: user.id,
+      first_name: user.first_name,
+      last_name: user.last_name,
+      icon_url: user.icon_url
+    }, ttl: expires_in.to_i)
+  end
+
+  def remove_symple_session
+    Symple.session.delete(token)
   end
 end
 ```
 
-## Contributing
+## Redis Key Format
 
-1. Fork it
-2. Create your feature branch (`git checkout -b my-new-feature`)
-3. Commit your changes (`git commit -am 'Add some feature'`)
-4. Push to the branch (`git push origin my-new-feature`)
-5. Create new Pull Request
+| Key | Purpose |
+| --- | --- |
+| `symple:session:<token>` | Session data (JSON) |
+| `symple#/#` | Pub/sub channel (default namespace) |
+| `symple#/chat#` | Pub/sub channel (`/chat` namespace) |
 
-## Contact
+## Requirements
 
-For more information please check out the Symple homepage: http://sourcey.com/symple/  
-If you have a bug or an issue then please use our new Github issue tracker: https://github.com/sourcey/symple-client-ruby/issues
+- Ruby >= 3.0
+- `redis` gem (>= 4.0)
+- `msgpack` gem (>= 1.0)
+
+## License
+
+MIT
