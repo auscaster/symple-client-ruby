@@ -1,18 +1,18 @@
 # Symple Client for Ruby
 
-Emit realtime messages and manage sessions from Ruby/Rails to the [Symple](https://github.com/sourcey/symple-server) messaging server via Redis.
+Emit realtime messages and manage sessions from Ruby/Rails to the [Symple](https://github.com/nilstate/symple-server) messaging server via Redis.
 
 Part of the Symple ecosystem:
 
-- **[symple-server](https://github.com/sourcey/symple-server)** — Node.js messaging server
-- **[symple-client](https://github.com/sourcey/symple-client)** — JavaScript client (browser & Node.js)
+- **[symple-server](https://github.com/nilstate/symple-server)** - Node.js messaging server
+- **[symple-client](https://github.com/nilstate/symple-client)** - JavaScript client (browser & Node.js)
 
 ## How It Works
 
-The Symple server uses the `@socket.io/redis-adapter` for horizontal scaling. This client speaks the same Redis pub/sub protocol, allowing your Ruby app to push messages directly to connected Socket.IO clients without HTTP requests to the Symple server.
+The Symple server subscribes to a Redis pub/sub channel for server-side message injection. This client publishes Symple protocol messages to that channel, allowing your Ruby app to push messages directly to connected WebSocket clients without maintaining its own WebSocket connection.
 
-```
-Ruby/Rails  -->  Redis pub/sub  -->  Symple Server  -->  Socket.IO Clients
+```text
+Ruby/Rails  -->  Redis pub/sub  -->  Symple Server  -->  WebSocket Clients
 ```
 
 ## Install
@@ -20,7 +20,7 @@ Ruby/Rails  -->  Redis pub/sub  -->  Symple Server  -->  Socket.IO Clients
 Add to your Gemfile:
 
 ```ruby
-gem 'symple-client-ruby', git: 'https://github.com/sourcey/symple-client-ruby'
+gem 'symple-client-ruby', git: 'https://github.com/nilstate/symple-client-ruby'
 ```
 
 Then `bundle install`.
@@ -72,11 +72,20 @@ Symple::Emitter.new
   .emit(type: 'message', data: 'Hi!')
 ```
 
-### Convenience method
+### Convenience Methods
 
 ```ruby
+# Emit a message
 Symple.emitter(from: user.id.to_s, rooms: ['42', '99'])
   .emit(type: 'event', name: 'refresh', data: { scope: 'contacts' })
+
+# Send presence
+Symple.emitter(from: user.id.to_s)
+  .send_presence(user: user.username, name: user.display_name, online: true)
+
+# Send an event
+Symple.emitter(from: user.id.to_s, rooms: ['lobby'])
+  .send_event('video.ready', { url: video.url })
 ```
 
 ## Session Management
@@ -133,14 +142,13 @@ end
 | Key | Purpose |
 | --- | --- |
 | `symple:session:<token>` | Session data (JSON) |
-| `symple#/#` | Pub/sub channel (default namespace) |
-| `symple#/chat#` | Pub/sub channel (`/chat` namespace) |
+| `symple:broadcast` | Pub/sub channel for server-side message injection |
 
 ## Requirements
 
 - Ruby >= 3.0
 - `redis` gem (>= 4.0)
-- `msgpack` gem (>= 1.0)
+- Symple server with Redis enabled (`SYMPLE_REDIS_URL`)
 
 ## License
 

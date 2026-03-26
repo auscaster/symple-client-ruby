@@ -1,55 +1,83 @@
 require 'redis'
-require 'msgpack'
 require 'json'
 require 'securerandom'
 
 module Symple
   class Emitter
-    module Type
-      EVENT = 2
-      BINARY_EVENT = 5
-    end
-
-    FLAGS = %w(json volatile broadcast).freeze
-
-    # Create a new Symple emitter.
+    # Create a new Symple v4 emitter.
+    #
+    # Publishes Symple protocol messages to the server via Redis pub/sub.
+    # The Symple server subscribes to the channel and routes messages
+    # to connected WebSocket peers.
     #
     # @param options [Hash]
     # @option options [Redis] :redis - Redis client instance (defaults to $redis)
-    # @option options [String] :uid - unique ID for this node (default: 'ruby')
-    # @option options [String] :nsp - Socket.IO namespace (default: '/')
-    # @option options [String] :from - sender address
-    # @option options [Array<String>] :rooms - target rooms/user IDs
-    # @option options [Hash] :flags - Socket.IO flags
+    # @option options [String] :channel - Redis pub/sub channel (default: 'symple:broadcast')
+    # @option options [String] :from - sender address (e.g. 'user|id')
+    # @option options [Array<String>] :rooms - target rooms
     def initialize(options = {})
       @redis = options[:redis] || $redis || Redis.new
-      @uid = options[:uid] || 'ruby'
-      @nsp = options[:nsp] || '/'
+      @channel = options[:channel] || 'symple:broadcast'
       @from = options[:from]
       @rooms = options[:rooms] || []
-      @flags = options[:flags] || {}
-
-      # Custom emit flag tells the Redis adapter to rebroadcast
-      @flags[:emit] = true
     end
 
-    # Emit a message via Redis pub/sub to the Symple server.
+    # Emit a Symple message via Redis pub/sub.
     #
-    # @param args [Array] message data (optionally preceded by an event name string)
+    # @param message [Hash] Symple protocol message
     # @return [self]
-    def emit(*args)
-      packet = encode_packet(*args)
-      packed = MessagePack.pack([@uid, packet, { rooms: @rooms, flags: @flags }])
+    def emit(message)
+      message = message.dup
+      message[:id] ||= SecureRandom.hex(8)
+      message[:type] ||= 'message'
+      message[:from] = @from if @from
+      message[:to] = @rooms unless @rooms.empty?
 
-      channel = "symple##{@nsp}#"
-      @redis.publish(channel, packed)
-
+      @redis.publish(@channel, JSON.generate(message))
       self
+    end
+
+    # Send a message to specific peers/rooms.
+    #
+    # @param data [Hash] message payload
+    # @param to [String, Array<String>] recipient address or room(s)
+    # @return [self]
+    def send(data, to: nil)
+      message = {
+        type: 'message',
+        data: data
+      }
+      message[:to] = to if to
+      emit(message)
+    end
+
+    # Send a presence message.
+    #
+    # @param peer_data [Hash] peer data (user, name, online, etc.)
+    # @return [self]
+    def send_presence(peer_data)
+      emit({
+        type: 'presence',
+        data: peer_data
+      })
+    end
+
+    # Send an event message.
+    #
+    # @param subtype [String] event subtype
+    # @param data [Hash] event data
+    # @return [self]
+    def send_event(subtype, data = {})
+      emit({
+        type: 'event',
+        subtype: subtype,
+        data: data
+      })
     end
 
     # Set the sender address.
     #
-    # @param addr [String] sender address (e.g. "user_id")
+    # @param addr [String] sender address (e.g. 'user|id')
     # @return [self]
     def from(addr)
       raise ArgumentError, 'Address must be a string' unless addr.is_a?(String)
@@ -57,68 +85,37 @@ module Symple
       self
     end
 
-    # Add a target room/user.
+    # Add a target room.
     #
-    # @param room [String] room name or user ID
+    # @param room [String] room name or user address
     # @return [self]
     def to(room)
-      raise ArgumentError, 'Address must be a string' unless room.is_a?(String)
+      raise ArgumentError, 'Room must be a string' unless room.is_a?(String)
       @rooms << room unless @rooms.include?(room)
       self
     end
     alias_method :in, :to
 
-    # Set the Socket.IO namespace.
+    # Store a session token in Redis for authentication.
     #
-    # @param nsp [String] namespace (e.g. '/chat')
+    # @param token [String] session token
+    # @param data [Hash] session data (user, permissions, etc.)
+    # @param ttl [Integer] time-to-live in seconds (nil for no expiry)
     # @return [self]
-    def of(nsp)
-      raise ArgumentError, 'Namespace must be a string' unless nsp.is_a?(String)
-      @nsp = nsp.to_s
+    def create_session(token, data, ttl: nil)
+      key = "symple:session:#{token}"
+      @redis.set(key, JSON.generate(data))
+      @redis.expire(key, ttl) if ttl
       self
     end
 
-    FLAGS.each do |flag|
-      define_method(flag) {
-        @flags.merge!(flag.to_sym => true)
-        self
-      }
-    end
-
-    protected
-
-    def has_binary?(args)
-      args.select { |x| x.is_a?(String) }.any? { |str|
-        str.encoding == Encoding::ASCII_8BIT && !str.ascii_only?
-      }
-    end
-
-    def encode_packet(*args)
-      # If multiple arguments and the first is a string, use it as the event name
-      event = args.length > 1 && args.first.is_a?(String) ? args.shift : 'message'
-
-      # Set packet type based on binary content
-      type = has_binary?(args) ? Type::BINARY_EVENT : Type::EVENT
-
-      # Build the message from remaining args
-      data = args.first
-      if data.is_a?(Hash) && data.include?(:data)
-        message = data
-      else
-        message = { data: data }
-      end
-
-      # Set required fields
-      message[:id] ||= SecureRandom.hex(16)
-      message.merge!(to: @rooms) if @rooms
-      message.merge!(from: @from) if @from
-
-      # Return Socket.IO encoded packet
-      {
-        type: type,
-        data: [event, message],
-        nsp: @nsp
-      }
+    # Remove a session token from Redis.
+    #
+    # @param token [String] session token
+    # @return [self]
+    def destroy_session(token)
+      @redis.del("symple:session:#{token}")
+      self
     end
   end
 end
