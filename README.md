@@ -1,11 +1,11 @@
 # Symple Client for Ruby
 
-Emit realtime messages and manage sessions from Ruby/Rails to the [Symple](https://github.com/nilstate/symple-server) messaging server via Redis.
+Emit realtime messages and manage sessions from Ruby/Rails to the [Symple](https://github.com/auscaster/symple-server) messaging server via Redis.
 
 Part of the Symple ecosystem:
 
-- **[symple-server](https://github.com/nilstate/symple-server)** - Node.js messaging server
-- **[symple-client](https://github.com/nilstate/symple-client)** - JavaScript client (browser & Node.js)
+- **[symple-server](https://github.com/auscaster/symple-server)** - Node.js messaging server
+- **[symple-client](https://github.com/auscaster/symple-client)** - JavaScript client (browser & Node.js)
 
 ## How It Works
 
@@ -20,7 +20,7 @@ Ruby/Rails  -->  Redis pub/sub  -->  Symple Server  -->  WebSocket Clients
 Add to your Gemfile:
 
 ```ruby
-gem 'symple-client-ruby', git: 'https://github.com/nilstate/symple-client-ruby'
+gem 'symple-client-ruby', git: 'https://github.com/auscaster/symple-client-ruby'
 ```
 
 Then `bundle install`.
