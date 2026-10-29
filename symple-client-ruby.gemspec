@@ -5,7 +5,7 @@ Gem::Specification.new do |s|
   s.description = 'Emit Symple protocol messages and manage sessions via Redis from Ruby/Rails.'
   s.authors     = ['Kam Low']
   s.email       = 'auscaster@gmail.com'
-  s.homepage    = 'https://github.com/nilstate/symple-client-ruby'
+  s.homepage    = 'https://auscaster.com/symple'
   s.license     = 'MIT'
 
   s.files       = Dir['lib/**/*.rb'] + ['symple.rb', 'README.md']
